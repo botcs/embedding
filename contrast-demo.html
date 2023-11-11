@@ -1,0 +1,449 @@
+
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+  </head>
+
+  <body>
+    <style>
+      body {
+	      font-family: Helvetica Neue, Helvetica, Arial, sans-serif;
+	      font-style: normal;
+	      font-variant: normal;
+	      font-weight: 100;
+	      line-height: 26.4px;
+      }
+      button{
+	      background-color:transparent;
+	      -moz-border-radius:8px;
+	      -webkit-border-radius:8px;
+	      border-radius:8px;
+	      border:4px solid;
+	      display:inline-block;
+	      cursor:pointer;
+	      font-size:30px;
+	      padding:13px 31px;
+	      text-decoration:none;
+	      -webkit-transition: .3s;
+	      transition: .3s;
+      }
+      
+      button:active {
+	      position:relative;
+	      top:5px;
+      }
+      
+      .decButton {
+	      color:#18ab29;
+      }
+      .decButton:hover {
+        background-color:#e7f6e9;
+      }
+
+      .incButton {
+	      color:#d10034;
+      }
+      .incButton:hover{
+        background-color:#fae5ea;
+      }
+        
+      .addButton {
+        color:#6495ed;
+	    }
+	    .addButton:hover{
+	      background-color:#eff4fd;
+	    }  
+        
+      .card{
+        color: #5077bd;
+        border: 6px solid; 
+        display: inline-block;
+        border-radius: 25px;
+        margin: 3px;
+        -webkit-transition: .1s;
+        transition: .1s;
+      }
+      .card:hover{
+        background-color:#eff4fd;
+      }
+      .select1{
+        background: repeating-linear-gradient(45deg, #a9c4f5, #a9c4f5 5px, transparent 5px, transparent 15px);
+      }
+      .select2{
+        background: repeating-linear-gradient(-45deg, #a9c4f5, #a9c4f5 5px, transparent 5px, transparent 15px);
+      }
+      
+      #distanceBar{  
+        background:black; 
+        height:10px;
+      }
+      
+      #errorBar{
+        text-align: center;
+        background-color:#000;
+        color:#ff0000;
+        font-weight: 100;
+      }
+    </style>
+    <div id="errorBar">
+    </div>
+    <div id="control-panel" style="margin:auto; display: table; text-align: center; padding: 30px">
+      <div style="margin: auto; ">    
+        <video id="webcam" autoplay playsinline muted height=0 width=0></video>
+        <canvas id="webcam-playback"></canvas>
+        <div style="text-align: left">
+          <h1>
+            Embedding Network Playground
+          </h1>
+          <ol>
+            <li>Add new samples using the blue button</li>
+            <li>Select two samples</li>
+            <li>Increase / Decrease the semantic distance between</li>
+            <li>Embedding vectors will be recalculated for every sample</li>
+          </ol>
+          <h2 id="distanceText">
+            Start by adding one more sample
+          </h2>
+        </div>
+      </div>
+      <div id="distanceBar">
+      </div>
+      <div style="padding:10px;">
+        <button onclick="addSample()" class="addButton">Add sample</button>
+        <button onclick="maximizeDistance()" class="incButton">Increase Distance</button>
+        <button onclick="minimizeDistance()" class="decButton">Decrease Distance</button>
+      </div>
+    </div>
+    <div id="card-table" style="margin: auto; display: table; text-align:center; padding: 10px">
+    </div>
+    <!-- <svg id="playground" style="border:3px solid #0a3d17; margin:auto" width=1000 height=1000></svg> -->
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@0.10.0"></script> -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+    <script>
+        var canvas = document.getElementById('webcam-playback');
+        var video = document.getElementById('webcam');
+        const bb = {
+            left: 100,
+            top: 100,
+            right: 250,
+            bottom: 250,
+            
+        };
+        
+        const cardDefault = {
+            radius: 25,
+            padding: 10,
+            fill: "#6495ed",
+            stroke: "#5077bd",
+            circleRows: 3,
+            circleCols: 3
+        }
+      //const webcam = new Webcam(video, canvas);
+      //webcam.setup();
+
+        ctx = canvas.getContext('2d');
+
+        const model = tf.sequential();
+        model.add(tf.layers.avgPooling2d({
+            inputShape: [bb.bottom-bb.top, bb.right-bb.left, 3],
+            poolSize: [2, 2], strides: [2, 2]
+        }));
+
+        model.add(tf.layers.conv2d({
+            kernelSize: 5,
+            filters: 8,
+            strides: 1,
+            activation: 'selu',
+            kernelInitializer: 'varianceScaling',
+            kernelRegularizer: 'l1l2'
+        }));
+        model.add(tf.layers.maxPooling2d({poolSize: [2, 2], strides: [2, 2]}));
+/*
+      model.add(tf.layers.conv2d({
+        kernelSize: 5,
+        filters: 16,
+        strides: 1,
+        activation: 'selu',
+        kernelInitializer: 'varianceScaling'
+      }));
+      model.add(tf.layers.maxPooling2d({poolSize: [2, 2], strides: [2, 2]}));
+*/
+        model.add(tf.layers.flatten());
+        model.add(tf.layers.dense({
+            units: 64, 
+            kernelInitializer: 'varianceScaling',
+            kernelRegularizer: 'l1l2',
+            activation:'selu'
+        }));
+    
+        model.add(tf.layers.dense({
+            units: 9, 
+            kernelInitializer: 'varianceScaling', 
+            kernelRegularizer: 'l1l2',
+            activation:'sigmoid'
+        }));
+        const lr = 0.003
+        const optimizer = tf.train.sgd(lr);
+      //const optimizer = tf.train.adam(lr);
+      
+        async function initWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        canvas.setAttribute('width', video.videoWidth);
+                        canvas.setAttribute('height', video.videoHeight);
+                        resolve();
+                    };
+                });
+            } catch (err) {
+                d3.select("#errorBar").text("ERROR: Video camera could not be captured");
+                console.error('Could not capture webcam stream...');
+            }
+        }
+
+        
+        function capture(){
+            var video = document.getElementById('webcam');
+            var canvas = document.getElementById('webcam-playback');
+            canvas.setAttribute('width', video.videoWidth); 
+            canvas.setAttribute('height', video.videoHeight); 
+            ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+            // draw bbox
+            ctx.strokeStyle="#CCCCCC";
+            ctx.lineWidth=5;
+            ctx.strokeRect(bb.left, bb.top, bb.right-bb.left, bb.bottom-bb.top);
+            
+            const rgbaImg = Array.from(ctx.getImageData(bb.left, bb.top, bb.right-bb.left, bb.bottom-bb.top).data);
+            return rgbaImg;
+        }
+        
+        function tensorFromPixel(rgbaImg){
+          return tf.tidy(() => {
+            const rgbaTensor = tf.tensor3d(rgbaImg, [bb.bottom-bb.top, bb.right-bb.left, 4]);
+            const rgbTensor = rgbaTensor.slice([0, 0, 0], [bb.bottom-bb.top, bb.right-bb.left, 3]);
+            const batchedImage = rgbTensor.expandDims(0);
+            return batchedImage.toFloat().div(tf.scalar(127)).sub(tf.scalar(1));
+          });
+        }
+        
+        function tensorBatchFromPixel(ArrayOfrgbaImg){
+          return tf.tidy(() => {
+            const rgbaTensor = tf.tensor2d(ArrayOfrgbaImg).reshape([-1, bb.bottom-bb.top, bb.right-bb.left, 4]);
+            const rgbTensor = rgbaTensor.slice([0, 0, 0, 0], [-1, bb.bottom-bb.top, bb.right-bb.left, 3]);
+            return rgbTensor;//.toFloat().div(tf.scalar(127)).sub(tf.scalar(1));
+          });
+        }
+        
+        sampleDB = [];
+        async function addSample(){
+          var rgbaImg = capture();
+          var x = tensorFromPixel(rgbaImg);
+          var y = model.predict(x);
+          var response = await y.data();
+          sampleDB.push({
+            inputImg: rgbaImg,
+            outputResponse: response
+          });
+          
+          var div = d3.select("#card-table")
+            .selectAll("div")
+            .data(sampleDB)
+            .enter()
+            .append("div")
+            .attr("class", "card")
+            .attr("id", (i, d)=>"card"+d)
+            .on("click", function(d){
+	            if (d3.select(this).classed("select1")){
+                d3.select(this).classed("select1", false);
+              } else if (d3.select(this).classed("select2")){
+                d3.select(this).classed("select2", false);
+              } else {
+                d3.selectAll('.select1').classed('select1', false);
+                d3.selectAll('.select2').classed('select2', false).classed('select1', true);
+                d3.select(this).classed("select2", true);
+              }
+              plotDistance();
+            });
+            
+            
+          var canvas = div.append("canvas").node();
+          canvas.width = cardDefault.circleCols * 
+            (2*cardDefault.radius + cardDefault.padding) + cardDefault.padding;
+          canvas.height = cardDefault.circleRows * 
+            (2*cardDefault.radius + cardDefault.padding) + cardDefault.padding;
+          canvas.style = "border-radius: 25px";
+          var svg = div.append("svg")
+            .attr("width", cardDefault.circleCols * 
+              (2*cardDefault.radius + cardDefault.padding) + cardDefault.padding)
+            .attr("height", cardDefault.circleRows * 
+              (2*cardDefault.radius + cardDefault.padding) + cardDefault.padding);
+            
+            
+          var circle = svg.selectAll("circle").data(response);
+          circle.attr("r", d => d*cardDefault.radius);
+          
+          var circleEnter = circle.enter().append("circle");
+          circleEnter
+            .attr("cx", function(d, i) { 
+              return cardDefault.padding + cardDefault.radius + 
+                i % cardDefault.circleCols * 
+                (2*cardDefault.radius + cardDefault.padding);
+              })
+            .attr("cy", function(d, i) { 
+              return cardDefault.padding + cardDefault.radius + 
+                Math.floor(i / (cardDefault.circleCols)) * 
+                (2*cardDefault.radius + cardDefault.padding);
+              })
+            .attr("r", cardDefault.radius)
+            .attr("fill", cardDefault.fill)
+            .attr("stroke", cardDefault.stroke)
+            .attr("stroke-width", 4);
+            
+          sampleCounter ++;
+        }
+
+        var sampleCounter = 0;
+        
+        async function plotDistance(){
+          try{
+            const d = await tf.tidy(()=>{
+                const y1 = tf.tensor(d3.select('.select1').data()[0].outputResponse);
+                const y2 = tf.tensor(d3.select('.select2').data()[0].outputResponse);
+                return y1.sub(y2).norm();
+            }).data();
+            
+            const cm = d => d3.interpolateRgb("green", "red")(d/3);
+            d3.select("#distanceText").text("Learned semantic distance: "+d);
+            d3.select("#distanceBar").style("width", (33 * d) + '%').style("background", cm(d));
+          } catch(err) {
+            console.error("Select 2 cards before plotting Distance");
+            d3.select("#distanceText").text("Select two samples");
+            d3.select("#distanceBar").style("width", "100%").style("background", "black");
+            return;
+          }; 
+        }
+        
+        function loss(){
+          const img1 = d3.select('.select1').data()[0].inputImg;
+          const img2 = d3.select('.select2').data()[0].inputImg;
+          
+          const y1 = model.predict(tensorFromPixel(img1));
+          const y2 = model.predict(tensorFromPixel(img2));
+          const d = y1.sub(y2).norm();
+          //const norm = y1.norm().add(y2.norm());
+          //const reg = 0.01;
+          //const loss = d.add(norm.mul(tf.scalar(reg)));
+          d.print()
+          return d;
+        }
+        
+        
+        async function updateAll(){
+          /*
+          var imgs = [];
+          for (var i=0; i<sampleDB.length; i++)
+            imgs.push(sampleDB[i].inputImg);
+          
+          var xs = tensorBatchFromPixel(imgs);
+          var ys = model.predict(xs);
+          */
+          
+          for (var i=0; i<sampleDB.length; i++){
+            //sampleDB[i].outputResponse = await ys.slice([i, 0]).data();
+            var y = model.predict(tensorFromPixel(sampleDB[i].inputImg));
+            sampleDB[i].outputResponse = await y.data();
+          }
+            
+          d3.selectAll(".card")
+              .data(sampleDB)
+              .select("svg")
+              .selectAll("circle")
+            .data(d => d.outputResponse)
+              .attr("r", d => d*cardDefault.radius);
+          
+          plotDistance();
+        }
+        
+        function updateLatest(inputImg, outputResponse){
+          sampleDB[sampleDB.length-1].inputImg = inputImg;
+          sampleDB[sampleDB.length-1].outputResponse = outputResponse;
+          var div = d3.select("#card" + (sampleCounter-1));
+          var canvas = div.select("canvas").node();
+          var ctx = canvas.getContext('2d');
+          
+          // Too much overhead if rendering manually
+          // instead just copy the playback buffer
+          //
+          //width = height = Math.floor(Math.sqrt(inputImg.length / 4));
+          //imgData = ctx.createImageData(width, height);
+          //console.log(imgData.data.length, inputImg.length);
+          //imgData.data.set(inputImg);
+          
+          var playbackCanv = document.getElementById('webcam-playback');          
+          ctx.drawImage(playbackCanv, 
+            bb.left, bb.top, bb.right-bb.left, bb.bottom-bb.top,
+            0, 0, canvas.width, canvas.height);
+          //ctx.putImageData(imgData, 0, 0, 0, 0, , 100);
+          //ctx.drawImage(imgData, 0, 0);
+          var svg = div.select("svg");
+          svg.selectAll("circle")
+            .data(outputResponse)
+            .attr("r", d => d*cardDefault.radius);
+          
+          if(div.classed("select1") || div.classed("select2"))
+            plotDistance();
+        }
+        
+        
+        function minimizeDistance(steps=1){
+          console.log('Minimize Distance...')
+          for (var i=0; i<steps; i++){
+            tf.tidy(()=>{optimizer.minimize(loss);});
+          }
+          updateAll();
+          
+          console.log('');
+        }
+        
+        function maximizeDistance(steps=1){
+          console.log('Maximize Distance...')        
+          for (var i=0; i<steps; i++){
+            tf.tidy(()=>{optimizer.minimize(()=>loss().mul(tf.scalar(-1)));});
+          }  
+          updateAll();
+
+          console.log('');
+        }
+        
+        initWebcam().then(() => {
+          addSample();
+          timer = setInterval(
+            async function () {
+              rgbaImg = capture();
+              x = tensorFromPixel(rgbaImg);
+              y = model.predict(x);
+              var response = await y.data();
+              updateLatest(rgbaImg, response);
+            }, 10);
+        });
+        
+    </script>
+    
+
+<!-- Global Site Tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-116010812-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'GA_TRACKING_ID');
+</script>
+
+
+</body>
+</html>
